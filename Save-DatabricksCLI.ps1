@@ -1,51 +1,113 @@
 #!/usr/bin/env pwsh
-param([switch]$RegisterPathInCurrentSession)
-
-# Copyright (c) Aware Group Ltd.
-# Licensed under the MIT License.
+<#
+.SYNOPSIS
+    Downloads and installs the Databricks CLI
+.DESCRIPTION
+    This script downloads and installs the Databricks CLI for the current operating system.
+    It automatically detects the OS and architecture and downloads the appropriate version.
+.PARAMETER RegisterPathInCurrentSession
+    If specified, adds the Databricks CLI installation directory to the current session's PATH
+.PARAMETER Version
+    Specifies the version of Databricks CLI to install. Defaults to 0.247.1
+.EXAMPLE
+    .\Install-DatabricksCLI.ps1
+    Downloads and installs the Databricks CLI
+.EXAMPLE
+    .\Install-DatabricksCLI.ps1 -RegisterPathInCurrentSession
+    Downloads and installs the Databricks CLI and adds it to the current session's PATH
+.EXAMPLE
+    .\Install-DatabricksCLI.ps1 -Version 0.247.1
+    Downloads and installs a specific version of the Databricks CLI
+.NOTES
+    This code is licenced under the MIT License
+    Copyright (c) 2025 Nathan Holland   
+    Copyright (c) 2023 AWARE GROUP, for licencing see https://github.com/awaregroup/databricks-powershell/blob/main/LICENSE
+#>
+param(
+    [switch]$RegisterPathInCurrentSession,
+    [string]$Version = "0.247.1"
+)
 
 $ErrorActionPreference = "Stop"
 
-$VERSION = "0.217.0" # Bump this version for newer versions
-$FILE = "databricks_cli_$VERSION"
-$TARGET = "$PSScriptRoot/databricks-cli"
+$FileName = "databricks_cli_$Version"
+$TargetPath = "$PSScriptRoot/databricks-cli"
+$TempFile = [System.IO.Path]::GetTempPath() + "${FileName}.zip"
 
-# Include operating system in file name.
-if (($Env:OS -eq "Windows_NT") -or $IsWindows ) {
-    $FILE = "${FILE}_windows"
+$OSPlatform = [System.Runtime.InteropServices.RuntimeInformation,mscorlib]::OSDescription.ToString().ToLower()
+$Architecture =  [System.Runtime.InteropServices.RuntimeInformation,mscorlib]::OSArchitecture.ToString().ToLower()
+
+$ActiveOs = switch -Wildcard ($OSPlatform) {
+    "*windows*" { "Windows" }
+    "*linux*"   { "linux" }
+    "*darwin*"  { "darwin" }
+    Default     { "unknown" }
 }
-elseif ($IsMacOS) {
-    $FILE = "${FILE}_darwin"
+$arch = switch ($architecture) {
+    "x64"  { "amd64" }
+    "amd64"  { "amd64" }
+    "arm64" { "arm64" }
+    Default { "unknown" }
+}
+
+# Set the path to the download
+if ($ActiveOs -eq "Windows") {
+    $FileName = "${FileName}_windows"
+}
+elseif ($ActiveOs -eq "darwin") {
+    $FileName = "${FileName}_darwin"
+    $ActiveOs = "MacOS"
+}
+elseif ($ActiveOs -eq "linux") {
+    $FileName = "${FileName}_linux"
+    $ActiveOs = "Linux"
 } else {
-    $FILE = "${FILE}_linux"
+    Write-Error "Unknown operating system: $OSPlatform"
 }
 
-if ($FILE -eq "databricks_cli_$VERSION") {
-    Write-Warning "Unknown operating system: $Env:OS"
-    exit 1
+if($arch -eq "unknown") {
+    Write-Error "Unknown architecture: $Architecture"
 }
 
-$FILE = "${FILE}_amd64"
+$FileName = "${FileName}_${Arch}"
+# Ensure target directory exists
+New-Item -ItemType Directory -Force -Path $TargetPath | Out-Null
 
-New-Item -ItemType Directory -Force -Path $TARGET
-Write-Host "Downloading from https://github.com/databricks/cli/releases/download/v${VERSION}/${FILE}.zip"
-# Download release archive.
-Invoke-WebRequest -Uri "https://github.com/databricks/cli/releases/download/v${VERSION}/${FILE}.zip" -OutFile "${FILE}.zip"
+$DownloadUrl = "https://github.com/databricks/cli/releases/download/v${Version}/${FileName}.zip"
+Write-Host "Downloading Databricks CLI v$Version for $ActiveOS ($arch)..."
+Invoke-WebRequest -Uri $DownloadUrl -OutFile $TempFile
 
-# Unzip release archive.
-Expand-Archive -Path "${FILE}.zip" -DestinationPath $TARGET -Force
+# Extract the CLI
+Write-Host "Extracting files..."
+Expand-Archive -Path $TempFile -DestinationPath $TargetPath -Force
 
-Remove-Item "${FILE}.zip"
-
+# Set executable permissions on Unix systems
 if ($IsLinux -or $IsMacOS) {
-    & chmod +x "$TARGET/databricks"
+    Write-Verbose "Setting executable permissions"
+    & chmod +x "$TargetPath/databricks"
 }
 
-if ($RegisterPathInCurrentSession) {
-    if (($Env:OS -eq "Windows_NT") -or $IsWindows ) {
-         $Env:Path += [IO.Path]::PathSeparator + $TARGET
+# Verify installation using proper PowerShell variable naming
+$ExecutablePath = if ($ActiveOs -eq "Windows") { Join-Path -Path $TargetPath -ChildPath "databricks.exe" } else { Join-Path -Path $TargetPath -ChildPath "databricks" }
+if (Test-Path -Path $ExecutablePath) {
+    Write-Output "Databricks CLI installed successfully at: $ExecutablePath"
+    & $ExecutablePath version
+    
+    if ($RegisterPathInCurrentSession) {
+        $Env:PATH = $Env:PATH + [IO.Path]::PathSeparator + $TargetPath
     }
     else {
-        $Env:PATH += [IO.Path]::PathSeparator + $TARGET
+        Write-Output "To use the Databricks CLI from any location, add this directory to your PATH: $TargetPath"
     }
+    
 }
+else {
+    Write-Error -Message "Failed to install Databricks CLI. Executable not found at $ExecutablePath"
+}
+
+# Clean up temporary files using proper PowerShell cmdlets
+if (Test-Path -Path $TempFile) {
+    Remove-Item -Path $TempFile -Force
+    Write-Verbose "Removed temporary file: $TempFile"
+}
+
