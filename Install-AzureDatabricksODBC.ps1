@@ -21,7 +21,7 @@
 #>
 [CmdletBinding()]
 Param (    
-    [Parameter(Position = 0)]
+    [Parameter()]
     [string]$DsnName = $null,
     
     [Parameter()]
